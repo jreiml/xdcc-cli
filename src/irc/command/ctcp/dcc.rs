@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 
 use anyhow::Result;
+use indicatif::ProgressBar;
 use lazy_static::lazy_static;
 use regex::Regex;
 use tokio::fs::File;
@@ -55,18 +56,22 @@ impl Send {
         self.filename.replace(" ", "_")
     }
 
-    pub async fn start_download(&self) -> Result<()> {
+    pub async fn start_download(&self, bar: ProgressBar) -> Result<()> {
         let mut file = BufWriter::new(File::create(self.normalized_filename()).await?);
         let mut stream = TcpStream::connect((self.ip, self.port)).await?;
         let mut buffer = [0; 4096];
         let mut progress: usize = 0;
+        bar.set_length(self.file_size as u64);
+        bar.set_message(format!("Downloading {}", self.normalized_filename()));
         while progress < self.file_size {
             let count = stream.read(&mut buffer[..]).await?;
             file.write_all(&mut buffer[..count]).await?;
             progress += count;
+            bar.set_position(progress as u64);
         }
         file.flush().await?;
         stream.shutdown().await?;
+        bar.finish();
         Ok(())
     }
 }

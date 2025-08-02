@@ -1,5 +1,6 @@
 use std::time::Duration;
 use anyhow::{Result, bail};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -25,6 +26,7 @@ pub struct PackageDownloader {
     timeout_duration: Duration,
     finished_sender: UnboundedSender<String>,
     print_handle: JoinHandle<()>,
+    progress_bars: MultiProgress,
 }
 
 impl PackageDownloader {
@@ -45,6 +47,7 @@ impl PackageDownloader {
             timeout_duration: Duration::from_secs(timeout_seconds / 2),
             finished_sender,
             print_handle,
+            progress_bars: MultiProgress::new(),
         })
     }
 
@@ -83,8 +86,17 @@ impl PackageDownloader {
         let normalized_filename = send.normalized_filename();
         log::info!("Accepting download of {} from {}.", normalized_filename, dcc.sender);
         let download_finished_sender = self.finished_sender.clone();
+        let bar = self.progress_bars.add(
+            ProgressBar::new(0).with_style(
+                ProgressStyle::with_template(
+                    "[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}",
+                )
+                .unwrap()
+                .progress_chars("=>-"),
+            ),
+        );
         let download = tokio::spawn(async move {
-            send.start_download().await?;
+            send.start_download(bar).await?;
             download_finished_sender.send(normalized_filename)?;
             Ok(())
         });
@@ -96,6 +108,7 @@ impl PackageDownloader {
         for download in self.downloads {
             let _ = download.await?;
         }
+        self.progress_bars.clear().unwrap();
         self.client.quit().await?;
         self.print_handle.await?;
         Ok(())
